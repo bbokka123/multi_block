@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <signal.h>
 #include <unistd.h>
 #include <netinet/in.h>
 #include <linux/types.h>
@@ -11,7 +12,7 @@
 #include "red_black_tree.h"
 
 int flag;
-
+RedBlackTree root;
 
 void dump(unsigned char* buf, int size) {
     int i;
@@ -21,6 +22,46 @@ void dump(unsigned char* buf, int size) {
         printf("%02x ", buf[i]);
     }
 }
+
+void block(unsigned char * buf, int size){
+	const char *GET = "GET ";
+	const char *POST = "POST ";
+	const char *HEAD = "HEAD ";
+	const char *PUT = "PUT ";
+	const char *DELETE = "DELETE ";
+	const char *OPTIONS = "OPTIONS ";
+	const char *Host = "Host: ";
+	RedBlackTree target = NULL;
+	unsigned char tmp;
+	int iph_size;
+	int tcph_size;
+        uint8_t tmp = 0x40;
+	tmp = tmp ^ buf[0];
+	iph_size = tmp *4;
+	tmp = buf[iph_size+12] >>4;
+	tcph_size = tmp *4;
+	if(size > iph_size + tcph_size){
+		buf += iph_size+ tcph_size;
+		if( memcmp(buf, GET, 4) == 0 || memcmp(buf, PUT, 4) == 0 || memcmp(buf, POST, 5) == 0 || memcmp(buf, HEAD, 5) == 0 || memcmp(buf, DELETE, 7) == 0 || memcmp(buf, OPTIONS, 8) == 0 ){
+			char *ptr = strstr((char *)buf, Host);
+			if(ptr == NULL) return;
+			for(int i=0; i<size - iph_size - tcph_size -1; i++){
+				if(ptr[i] == 0x0d && ptr[i+1] == 0x0a)
+					break;
+			}
+			ptr[i] = '\0';
+			ptr += strlen(Host);
+
+			target = Find(ptr, root);
+			if(target){
+				flag = 1;
+				printf("\n---------Blocked  :%s-----------\n", ptr);
+			}
+		}
+	}
+	return;
+	}	
+
 /* returns packet id */
 static u_int32_t print_pkt (struct nfq_data *tb)
 {
@@ -71,7 +112,7 @@ static u_int32_t print_pkt (struct nfq_data *tb)
     if (ret >= 0){
         printf("payload_len=%d ", ret);
 	//dump(data,ret);	
-	blocking(data,ret);
+	block(data,ret);
 	}
     fputc('\n', stdout);
 
@@ -100,19 +141,23 @@ int main(int argc, char **argv)
     char buf[4096] __attribute__ ((aligned));
     
     const int max=1000;
-    
+    root = NULL;
 
     FILE *fp;
     fp = fopen("top-1m.csv","r"); 
-    char url[81];
     
-    int i;
+    char url[81];
+    int j;
+    
     while(!feof(fp)){
-    	i=0;
-	fgets(url,81,fp);
+    	j=0;
+	fgets(url,80,fp);
+	s[strlen(s)-1] = '\0';
 	while(url[j++]!= ',');
-        	
-
+        root= Insert( &url[j], root);
+    }
+    fclose(fp);
+    
     system("iptables -A OUPUT -j NFQUEUE --queue-num 0");
 
     printf("opening library handle\n");
